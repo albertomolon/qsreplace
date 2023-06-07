@@ -12,10 +12,11 @@ import (
 
 func main() {
 	var appendMode bool
+	var nEncode int
+	var uniqueMode bool
 	flag.BoolVar(&appendMode, "a", false, "Append the value instead of replacing it")
-
-	var ignorePath bool
-	flag.BoolVar(&ignorePath, "ignore-path", false, "Ignore the path when considering what constitutes a duplicate")
+	flag.IntVar(&nEncode, "e", 1, "Number URL Encode for Bypass WAF")
+	flag.BoolVar(&uniqueMode, "u", false, "Uniquely modify one parameter at a time")
 	flag.Parse()
 
 	seen := make(map[string]bool)
@@ -34,15 +35,12 @@ func main() {
 		// as part of the key to output only unique requests. To do that, put
 		// them into a slice and then sort it.
 		pp := make([]string, 0)
-		for p, _ := range u.Query() {
+		for p := range u.Query() {
 			pp = append(pp, p)
 		}
 		sort.Strings(pp)
 
 		key := fmt.Sprintf("%s%s?%s", u.Hostname(), u.EscapedPath(), strings.Join(pp, "&"))
-		if ignorePath {
-			key = fmt.Sprintf("%s?%s", u.Hostname(), strings.Join(pp, "&"))
-		}
 
 		// Only output each host + path + params combination once
 		if _, exists := seen[key]; exists {
@@ -50,18 +48,48 @@ func main() {
 		}
 		seen[key] = true
 
-		qs := url.Values{}
-		for param, vv := range u.Query() {
-			if appendMode {
-				qs.Set(param, vv[0]+flag.Arg(0))
-			} else {
-				qs.Set(param, flag.Arg(0))
+		if uniqueMode {
+			old_qs := u.Query()
+			for param := range u.Query() {
+				qs := url.Values{}
+				if appendMode {
+					qs.Set(param, old_qs.Get(param)+flag.Arg(0))
+				} else {
+					qs.Set(param, flag.Arg(0))
+				}
+				for p := range u.Query() {
+					if p != param {
+						qs.Set(p, old_qs.Get(p))
+					}
+				}
+
+				u.RawQuery = qs.Encode()
+
+				fmt.Printf("%s\n", u)
 			}
+		} else {
+			qs := url.Values{}
+			for param, vv := range u.Query() {
+				if appendMode {
+					qs.Set(param, vv[0]+flag.Arg(0))
+				} else {
+					qs.Set(param, flag.Arg(0))
+				}
+			}
+
+			// Param for encode Payload - Bypass WAF
+
+			if nEncode > 0 {
+				u.RawQuery = qs.Encode()
+
+				for i := 0; i < nEncode; i++ {
+					u.RawQuery += qs.Encode()
+				}
+			} else {
+				u.RawQuery = qs.Encode()
+			}
+				fmt.Printf("%s\n", u)
 		}
-
-		u.RawQuery = qs.Encode()
-
-		fmt.Printf("%s\n", u)
 
 	}
 
